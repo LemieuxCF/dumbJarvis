@@ -1,1 +1,1 @@
-web: python echo_jarvis.py
+web: python main_jarvis.py
