@@ -1,7 +1,16 @@
-import json
+from datetime import datetime, timedelta
 import logging
 import os
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+import pytz
+from telegram.ext import (
+    CommandHandler, 
+    Dispatcher, 
+    Filters,
+    Job,
+    JobQueue, 
+    MessageHandler, 
+    Updater
+)
 from core_jarvis import CoreJarvis
 
 jarvis = CoreJarvis()
@@ -12,50 +21,75 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 logger = logging.getLogger(__name__)
 
-TOKEN = '1256967228:AAEvXSWA5ZEzcqzZi7hWWM3BVe6rLaqvFYg'
+TOKEN = ''
 
 PORT = int(os.environ.get('PORT', '8443'))
 
 
-def start(update, context):
-    """Send a message when the command /start is issued."""
-    update.message.reply_text('Hi!')
+class DumbJarvis:
+    def __init__(self, mode = 'test', timezone = 'Asia/Seoul'):
+        """ Initialize mode: default is test, 'prod' for production 
+            and timezone: default is Asia/Seoul             
+        """
+        self.__mode = mode
+        self.__timezone = timezone
+
+        """ Initialize core Python telegram API objects """
+        self.__updater: Updater = Updater(TOKEN, use_context = True)
+        self.__dp: Dispatcher = self.__updater.dispatcher
+        self.__job_queue: JobQueue = self.__updater.job_queue
+        
+        """ Initialize core functionality object """
+        self.__jarvis: CoreJarvis = CoreJarvis()
+
+        """ Declare periodic jobs """
+        self.__duties_job: Job = None
+
+        """ Add handlers """
+        self.__dp.add_handler(CommandHandler("start", self.__start))
+        self.__dp.add_handler(CommandHandler("duties", self.__get_duties))
+        self.__dp.add_handler(MessageHandler(Filters.text, self.__echo))
 
 
-def echo(update, context):
-    """Echo the user message."""
-    update.message.reply_text(update.message.text)
+    def run(self):
+        if (self.__mode == 'test'):
+            self.__updater.start_polling() 
+        else:
+            self.__updater.start_webhook(listen="0.0.0.0",
+                         port=PORT,
+                         url_path=TOKEN)
+            self.__updater.bot.set_webhook("https://dumb-jarvis.herokuapp.com/" + TOKEN)
+            self.__updater.idle() 
+           
 
+    def __start(self, update, context):
+        """ Start the duties reminder job """
+        self.__duties_job = self.__job_queue.run_repeating(
+            self.__update_and_release_duties,
+            timedelta(seconds=20),
+            pytz.timezone(self.__timezone).localize(
+                datetime(2020, 4, 29, 3, 15, 0)))
+        """Send a message when the command /start is issued."""
+        update.message.reply_text('Hi there!')
 
-def get_duties(update, context):
-    duties = json.dumps(jarvis.get_duties(), indent=2)
-    update.message.reply_text(duties)
+    def __echo(self, update, context):
+        """Echo the user message."""
+        update.message.reply_text(update.message.text)
+
+    def __get_duties(self, update, context):
+        update.message.reply_text(jarvis.get_duties())
+
+    def __update_and_release_duties(self, context):
+        jarvis.update_duties()
+        context.bot.send_message(chat_id='221220492', 
+            text=""" Duties updated for this week:
+            {0} """.format(jarvis.get_duties()))
 
 
 def main():
-    updater = Updater(TOKEN, use_context=True)
-
-    # Get the dispatcher to register handlers
-    dp = updater.dispatcher
-
-    # on different commands - answer in Telegram
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("duties", get_duties))
-
-    # on noncommand i.e message - echo the message on Telegram
-    dp.add_handler(MessageHandler(Filters.text, echo))
-
-    # Start the Bot
-    """ Polling for testing purposes """
-#    updater.start_polling()
- 
-    """ Webhook for production """
-    updater.start_webhook(listen="0.0.0.0",
-                          port=PORT,
-                          url_path=TOKEN)
-    updater.bot.set_webhook("https://dumb-jarvis.herokuapp.com/" + TOKEN)
-    updater.idle() 
-
+    dumb_jarvis = DumbJarvis()
+    dumb_jarvis.run()
+    
 
 if __name__ == '__main__':
     main()
